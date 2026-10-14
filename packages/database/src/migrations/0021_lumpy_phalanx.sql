@@ -1,0 +1,1 @@
+ALTER TABLE "glpi_machine" ADD COLUMN "type" text;

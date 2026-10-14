@@ -1,0 +1,1 @@
+ALTER TABLE "pole" ADD COLUMN "source_glpi" boolean DEFAULT false NOT NULL;

@@ -1,0 +1,2 @@
+ALTER TABLE "composante" ADD COLUMN "vice_directeur_id" text;--> statement-breakpoint
+ALTER TABLE "composante" ADD CONSTRAINT "composante_vice_directeur_id_personne_id_fk" FOREIGN KEY ("vice_directeur_id") REFERENCES "public"."personne"("id") ON DELETE set null ON UPDATE no action;

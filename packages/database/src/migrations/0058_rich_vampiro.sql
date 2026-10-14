@@ -1,0 +1,1 @@
+ALTER TYPE "public"."detection_source" ADD VALUE 'sonde_produit' BEFORE 'manuel';

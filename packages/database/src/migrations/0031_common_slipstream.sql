@@ -1,0 +1,1 @@
+ALTER TABLE "preference_utilisateur" ADD COLUMN "vues_catalogues" jsonb;

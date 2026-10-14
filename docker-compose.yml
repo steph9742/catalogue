@@ -1,0 +1,239 @@
+# Tout tourne dans le réseau interne `catalogue-network`.
+# Seul le reverse-proxy (nginx) expose un port sur l'hôte : c'est l'unique porte
+# d'entrée. Le navigateur atteint le front ET l'API (/api) via cette même origine ;
+# le SSR et l'API↔DB communiquent en interne par nom de service.
+x-server-build: &server-build
+  context: .
+  dockerfile: apps/server/Dockerfile
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-catalogue}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-catalogue}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks:
+      - catalogue-network
+
+  # Applique les migrations puis s'arrête (le serveur attend sa réussite).
+  migrate:
+    build: *server-build
+    image: catalogue-server:latest
+    command: ["/app/migrate"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-catalogue}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - catalogue-network
+
+  server:
+    build: *server-build
+    image: catalogue-server:latest
+    environment:
+      PORT: 4000
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-catalogue}
+      # Origine seule (SANS sous-chemin) : le reverse retire le préfixe avant le backend,
+      # donc better-auth sert /api/auth. Pour l'OIDC sous sous-chemin, définir OIDC_REDIRECT_URI.
+      BETTER_AUTH_URL: ${PUBLIC_URL:-http://localhost:8080}
+      # Sous-chemin, transmis SÉPARÉMENT de l'origine : c'est ce qui permet au serveur de
+      # composer des URL de fiche absolues (pour un assistant, un webhook, un rapport)
+      # sans jamais reconstituer l'adresse au jugé. Les concaténer dans une seule variable
+      # a déjà produit une adresse d'API en double sous-chemin.
+      BASE_PATH: ${BASE_PATH:-}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-me}
+      TRUSTED_ORIGINS: ${PUBLIC_URL:-http://localhost:8080}
+      # SSO OIDC (Dex). SANS CES LIGNES, les variables du .env n'atteignaient pas le
+      # conteneur : le fournisseur n'était jamais déclaré et le SSO restait inopérant,
+      # quoi qu'on renseigne. `OIDC_CLIENT_ID` vide = SSO désactivé (mode local).
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL:-}
+      OIDC_NC_URL: ${OIDC_NC_URL:-}
+      OIDC_PROVIDER_ID: ${OIDC_PROVIDER_ID:-}
+      # Anciens noms, lus en repli : une instance déjà déployée n'a rien à changer.
+      OUATE_CLIENT_ID: ${OUATE_CLIENT_ID:-}
+      OUATE_CLIENT_SECRET: ${OUATE_CLIENT_SECRET:-}
+      OUATE_DISCOVERY_URL: ${OUATE_DISCOVERY_URL:-}
+      OUATE_NC_URL: ${OUATE_NC_URL:-}
+      # Sous-chemin uniquement : le reverse retire le préfixe, l'URL de rappel calculée
+      # automatiquement le perdrait. Doit valoir exactement ce qui est déclaré côté Dex.
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+      OUATE_REDIRECT_URI: ${OUATE_REDIRECT_URI:-}
+      AUTH_DOMAIN: ${AUTH_DOMAIN:-}
+      AUTH_SECOURS: ${AUTH_SECOURS:-true}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:cyber@example.org}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # RETOUR DE BOUCLE VERS L'HÔTE.
+    #
+    # Le serveur va chercher le document de découverte OIDC à l'adresse PUBLIQUE de Dex.
+    # Or, depuis le réseau Docker, ce nom résout vers une adresse que le conteneur ne peut
+    # pas joindre — pare-feu, NAT sans retour de boucle, ou DNS qui répond l'adresse
+    # externe. Le symptôme est trompeur : « ConnectionRefused » sur une URL que le même
+    # serveur sert parfaitement depuis un navigateur.
+    #
+    # AUTH_HOST_INTERNE fait pointer ce nom vers la passerelle de l'hôte, donc vers son
+    # nginx, en court-circuitant DNS et NAT. Le nom reste le bon : le certificat TLS
+    # correspond toujours.
+    # SNIFF_HOST_INTERNE : même mécanique pour le nom public de Sniff (connecteur
+    # incidents). Sniff fait exactement pareil chez lui, dans l'autre sens, en épinglant
+    # les deux noms vers l'adresse du serveur. Le symptôme sans cette entrée : le test de
+    # connexion du connecteur répond « Unable to connect » alors que l'URL fonctionne
+    # depuis un navigateur. Les valeurs par défaut sont des noms neutres jamais résolus
+    # ailleurs, pour que l'entrée soit inerte tant que la variable n'est pas renseignée.
+    extra_hosts:
+      - "${AUTH_HOST_INTERNE:-host.docker.internal}:host-gateway"
+      - "${SNIFF_HOST_INTERNE:-hote.sniff.interne}:host-gateway"
+    volumes:
+      # CLÉ DE CHIFFREMENT DES SECRETS DE CONNECTEUR.
+      #
+      # Les jetons GLPI, la clé de service Sniff et le jeton HarfangLab sont chiffrés en
+      # base ; la clé, elle, vit ICI — hors de la base, puisque c'est précisément le
+      # contenu de la base (et de ses sauvegardes hors-site) qu'elle protège. La mettre
+      # dedans reviendrait à livrer la serrure avec la porte.
+      #
+      # Le même volume porte déjà le mot de passe de secours déposé par le seed. Sous
+      # Linux, il doit appartenir à l'uid 1001 : `sudo chown 1001:1001 .secrets`.
+      - ./.secrets:/app/.secrets
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - catalogue-network
+
+  app:
+    build:
+      context: .
+      dockerfile: apps/app/Dockerfile
+    environment:
+      PORT: 3000
+      HOST: 0.0.0.0
+      # Chemin web de base (sous-chemin) : '/' à la racine, '/catalogue/' en sous-chemin.
+      NUXT_APP_BASE_URL: ${BASE_PATH:-}/
+      # Navigateur → via le proxy (origine publique + sous-chemin) ; SSR → API en interne.
+      NUXT_PUBLIC_SERVER_BASE_URL: ${PUBLIC_URL:-http://localhost:8080}${BASE_PATH:-}
+      NUXT_SERVER_BASE_URL_INTERNAL: http://server:4000
+      # Affiche le bouton « Connexion avec le portail ». Dérivé de la présence du client OIDC :
+      # renseigner OIDC_CLIENT_ID suffit, il n'y a pas de second interrupteur à penser.
+      # Toute valeur non vide vaut « activé » : les deux noms sont testés, et les deux
+      # renseignés donnent « truetrue », ce qui reste non vide — donc juste.
+      NUXT_PUBLIC_OIDC_ENABLED: ${OIDC_CLIENT_ID:+true}${OUATE_CLIENT_ID:+true}
+      NUXT_PUBLIC_OIDC_PROVIDER_ID: ${OIDC_PROVIDER_ID:-ouate}
+    depends_on:
+      server:
+        condition: service_healthy
+    networks:
+      - catalogue-network
+
+  # Unique service exposé sur l'hôte.
+  reverse:
+    image: nginx:alpine
+    ports:
+      - "${APP_PORT:-8080}:80"
+    environment:
+      # Sous-chemin de déploiement (vide = racine, ex. /catalogue = sous-chemin). Rendu par envsubst.
+      BASE_PATH: ${BASE_PATH:-}
+    volumes:
+      - ./deploy/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+    depends_on:
+      - app
+      - server
+    networks:
+      - catalogue-network
+
+  # À la demande : crée le compte admin. `docker compose run --rm seed`
+  seed:
+    build: *server-build
+    image: catalogue-server:latest
+    command: ["/app/seed"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-catalogue}
+      BETTER_AUTH_URL: ${PUBLIC_URL:-http://localhost:8080}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-me}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-secours@catalogue.local}
+      # Mot de passe du compte de SECOURS. Le fichier prime sur la variable : une variable
+      # se lit dans `docker inspect` et dans les journaux de l'orchestrateur, un fichier en
+      # 0600 non — et surtout il se copie vers le réplica pour partager le même identifiant.
+      SEED_ADMIN_PASSWORD_FILE: ${SEED_ADMIN_PASSWORD_FILE:-}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      AUTH_DOMAIN: ${AUTH_DOMAIN:-}
+    volumes:
+      # Secrets locaux : le seed y lit le mot de passe de secours, ou l'y dépose s'il en
+      # engendre un. Ce dossier se recopie vers le réplica pour partager l'identifiant.
+      - ./.secrets:/app/.secrets
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    profiles: ["seed"]
+    networks:
+      - catalogue-network
+
+  # Sauvegarde AUTOMATIQUE quotidienne, tant que la stack tourne.
+  # Écrite après la perte totale de la base du 29/07/2026 : la seule sauvegarde existante
+  # faisait 0 octet. Ce service vérifie donc chaque dump (taille + présence de tables) et
+  # supprime les fichiers invalides plutôt que de laisser croire à une sauvegarde.
+  # Les dumps atterrissent dans ./backup, HORS du volume Docker — pour survivre à la
+  # destruction du volume, qui est précisément ce qui s'est produit.
+  sauvegarde:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    volumes:
+      - ./backup:/backup
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      GARDER: ${CATALOGUE_BACKUP_KEEP:-14}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          f="/backup/auto-$$(date +%Y%m%d-%H%M%S).sql.gz"
+          if pg_dump -h postgres -U ${POSTGRES_USER:-postgres} --clean --if-exists ${POSTGRES_DB:-catalogue} | gzip > "$$f"; then
+            taille=$$(wc -c < "$$f")
+            tables=$$(gunzip -c "$$f" | grep -c "^CREATE TABLE" || true)
+            if [ "$$taille" -lt 1024 ] || [ "$$tables" -lt 1 ]; then
+              echo "sauvegarde invalide ($$taille o, $$tables tables) — supprimee"; rm -f "$$f"
+            else
+              echo "sauvegarde ok : $$f ($$taille o, $$tables tables)"
+            fi
+          else
+            echo "echec pg_dump"; rm -f "$$f"
+          fi
+          ls -1t /backup/auto-*.sql.gz 2>/dev/null | tail -n +$$((GARDER + 1)) | xargs -r rm -f
+          sleep 86400
+        done
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - catalogue-network
+
+networks:
+  catalogue-network:
+    driver: bridge
+
+volumes:
+  postgres-data:

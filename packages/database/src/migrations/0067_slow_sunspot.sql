@@ -1,0 +1,1 @@
+ALTER TYPE "public"."entite_edr_cible" ADD VALUE 'etablissement';

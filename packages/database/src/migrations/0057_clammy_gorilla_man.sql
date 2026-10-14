@@ -1,0 +1,2 @@
+ALTER TABLE "correspondance_unite" ADD COLUMN "libelle_ldap" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "correspondance_unite_ldap_unique" ON "correspondance_unite" USING btree ("libelle_ldap");

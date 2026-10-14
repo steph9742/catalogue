@@ -1,0 +1,51 @@
+# Reverse proxy interne — template rendu au démarrage (envsubst) avec ${BASE_PATH}.
+# BASE_PATH vide  → service à la racine (/api, /).
+# BASE_PATH=/catalogue → service sous-chemin (/catalogue/api → strip vers /api, /catalogue/ → app).
+# Les variables nginx ($host, $scheme…) ne sont pas dans l'environnement : envsubst les préserve.
+
+server {
+    listen 80;
+    server_name localhost;
+
+    # Dépôt de pièces jointes : nginx plafonne à 1 Mo par défaut, ce qui rejetterait
+    # en 413 tout fichier un peu gros. Aligné sur TAILLE_MAX du routeur (20 Mo).
+    client_max_body_size 20m;
+
+    # API — le préfixe ${BASE_PATH} est retiré avant transmission au backend (routes /api non préfixées).
+    location ${BASE_PATH}/api {
+        proxy_pass http://server:4000/api;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Certaines opérations sont longues (sync GLPI d'un parc de plusieurs milliers de
+        # machines) : on laisse jusqu'à 5 min avant de couper (défaut nginx = 60 s).
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
+    location ${BASE_PATH}/openapi {
+        proxy_pass http://server:4000/openapi;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ${BASE_PATH}/health {
+        proxy_pass http://server:4000/health;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Frontend Nuxt — sert sous ${BASE_PATH}/ (app.baseURL), on transmet l'URI telle quelle.
+    location ${BASE_PATH}/ {
+        proxy_pass http://app:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

@@ -1,0 +1,11 @@
+-- Secret du webhook entrant de Sniff, chiffré comme la clé de service.
+--
+-- Sniff pousse deux événements — `exclusion_appariee` et `exclusion_detachee` — signés en
+-- HMAC-SHA256 dans l'en-tête `X-Slowpoke-Signature`. Ce secret vérifie la signature.
+--
+-- Sans lui, les événements poussés sont REFUSÉS. Accepter une charge non signée
+-- laisserait modifier des échéances réglementaires par une simple requête HTTP, sur une
+-- route qui n'a par construction ni session ni clé de service — l'appelant est une machine
+-- sans compte ici. Le relevé périodique continue de fonctionner sans ce secret : seule la
+-- bascule immédiate d'autorité devient indisponible.
+ALTER TABLE "connecteur_slowpoke" ADD COLUMN "secret_webhook" text;

@@ -1,0 +1,1 @@
+ALTER TABLE "certificat" ADD COLUMN "caa" jsonb;

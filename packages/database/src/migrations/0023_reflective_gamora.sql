@@ -1,0 +1,1 @@
+ALTER TABLE "connecteur_slowpoke" ADD COLUMN "cle_service" text;

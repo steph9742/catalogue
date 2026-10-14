@@ -1,0 +1,54 @@
+# dependencies (bun install)
+node_modules
+
+# output
+out
+dist
+*.tgz
+
+# code coverage
+coverage
+*.lcov
+
+# logs
+logs
+_.log
+report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+
+# dotenv environment variable files
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
+
+# IntelliJ based IDEs
+.idea
+
+# Finder (MacOS) folder config
+.DS_Store
+.turbo
+
+.github/agents
+.github/skills
+# Sauvegardes de base de données : elles contiennent l'INTÉGRALITÉ des données
+# (inventaire, personnes, conformité). Elles n'ont rien à faire dans un dépôt.
+backup/
+*.sql.gz
+
+# Navigateurs Playwright installés localement pour générer les captures
+.cache/ms-playwright/
+
+# Secrets locaux (mot de passe du compte de secours). Se copient d'un environnement à
+# l'autre à la main, jamais par le dépôt.
+.secrets/
+
+# Retours de travaux, transmis à la main et non versionnés.
+RETOURS_CLAUDE_CODE.md
+.nuxt/
+.output/

@@ -1,0 +1,1 @@
+ALTER TABLE "whitelist" ADD COLUMN "sniff_revue_id" text;

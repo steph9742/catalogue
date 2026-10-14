@@ -1,0 +1,2 @@
+ALTER TABLE "correspondance_unite" ADD COLUMN "fusionnee_avec" text;--> statement-breakpoint
+ALTER TABLE "correspondance_unite" ADD CONSTRAINT "correspondance_unite_fusionnee_avec_correspondance_unite_id_fk" FOREIGN KEY ("fusionnee_avec") REFERENCES "public"."correspondance_unite"("id") ON DELETE set null ON UPDATE no action;

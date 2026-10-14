@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+@theme {
+    --font-mono: "JetBrains Mono", monospace;
+    --font-sans: "Google Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+
+    --color-text: oklch(17.38% 0.029 156.90);
+    --color-background: #fbfefc;
+
+    --color-primary-50: oklch(97.12% 0.021 156.83);
+    --color-primary-100: oklch(94.09% 0.040 156.86);
+    --color-primary-200: oklch(88.41% 0.079 155.73);
+    --color-primary-300: oklch(83.03% 0.117 154.32);
+    --color-primary-400: oklch(78.08% 0.151 152.85);
+    --color-primary-500: oklch(73.61% 0.180 150.52);
+    --color-primary-600: oklch(62.45% 0.151 150.74);
+    --color-primary-700: oklch(50.74% 0.121 150.70);
+    --color-primary-800: oklch(38.35% 0.087 151.16);
+    --color-primary-900: oklch(24.86% 0.050 152.26);
+    --color-primary-950: oklch(17.38% 0.029 156.90);
+
+    --color-secondary-50: oklch(95.62% 0.014 258.35);
+    --color-secondary-100: oklch(91.39% 0.026 253.57);
+    --color-secondary-200: oklch(82.51% 0.054 255.44);
+    --color-secondary-300: oklch(73.81% 0.083 255.03);
+    --color-secondary-400: oklch(64.96% 0.113 255.79);
+    --color-secondary-500: oklch(56.59% 0.143 256.16);
+    --color-secondary-600: oklch(48.19% 0.119 256.34);
+    --color-secondary-700: oklch(39.65% 0.094 255.83);
+    --color-secondary-800: oklch(30.37% 0.068 256.10);
+    --color-secondary-900: oklch(20.63% 0.037 254.41);
+    --color-secondary-950: oklch(15.08% 0.021 249.33);
+
+    --color-accent-50: oklch(94.45% 0.020 286.01);
+    --color-accent-100: oklch(88.82% 0.040 285.57);
+    --color-accent-200: oklch(77.66% 0.081 283.56);
+    --color-accent-300: oklch(66.23% 0.126 281.87);
+    --color-accent-400: oklch(55.18% 0.172 278.42);
+    --color-accent-500: oklch(44.86% 0.214 273.06);
+    --color-accent-600: oklch(38.49% 0.178 273.42);
+    --color-accent-700: oklch(31.69% 0.142 274.21);
+    --color-accent-800: oklch(24.73% 0.102 275.27);
+    --color-accent-900: oklch(17.12% 0.058 278.36);
+    --color-accent-950: oklch(13.06% 0.032 276.77);
+}

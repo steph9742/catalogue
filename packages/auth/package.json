@@ -1,0 +1,29 @@
+{
+  "name": "@catalogue/auth",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "generate": "bunx auth@latest generate --config ./src/index.ts -y --output ../database/src/schemas/auth-schema.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "@catalogue/eslint-config": "*",
+    "eslint": "^10.0.3"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "better-auth": "^1.5.4",
+    "@catalogue/database": "*",
+    "@catalogue/better-auth-plugins": "*",
+    "drizzle-orm": "^0.45.1"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*"
+  }
+}

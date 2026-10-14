@@ -1,0 +1,1 @@
+ALTER TABLE "personne" ADD COLUMN "mfa_actif" boolean;

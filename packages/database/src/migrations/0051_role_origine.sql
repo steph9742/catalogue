@@ -1,0 +1,21 @@
+-- Origine du rôle global : l'annuaire, ou une décision prise dans l'application.
+--
+-- Le rôle global suit désormais le groupe `admins` de l'annuaire à CHAQUE connexion, dans
+-- les deux sens : y entrer l'accorde, en sortir le retire. Auparavant il n'était posé qu'à
+-- la création du compte, et une personne retirée du groupe restait administratrice
+-- indéfiniment.
+--
+-- Mais il faut pouvoir nommer administrateur quelqu'un qui n'est pas dans le groupe. D'où
+-- cette colonne :
+--
+--   NULL ou 'annuaire' — le rôle est réévalué à chaque connexion (comportement par défaut) ;
+--   'manuel'           — le rôle a été posé dans l'application, l'annuaire n'y touche plus.
+--
+-- La contrepartie du verrou est réelle : la révocation par l'annuaire ne s'applique plus à
+-- ces comptes. Ils sont donc affichés comme tels dans Réglages → Utilisateurs & rôles, et
+-- recensés par /api/lacunes — un rôle qui échappe à l'annuaire doit rester visible, sans
+-- quoi il devient permanent par oubli. Un bouton rend la main à l'annuaire.
+--
+-- Les valeurs existantes restent NULL : les comptes déjà créés suivront l'annuaire à leur
+-- prochaine connexion, ce qui est le comportement voulu.
+ALTER TABLE "user" ADD COLUMN "role_origine" text;
