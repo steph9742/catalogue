@@ -112,6 +112,21 @@ export const auditSurfaceRouter = new Elysia({ name: 'audit-surface', prefix: '/
     return testerConnexionAudit({ url, jeton, dialecte })
   }, { auth: ['admin'], body: t.Object({ url: t.Optional(t.String()), jeton: t.Optional(t.String()), dialecte: t.Optional(t.String()) }) })
 
+  // RELIRE DEPUIS LE DÉBUT. Le curseur ne sert qu'à éviter de relire ; le remettre à zéro ne
+  // crée pas de doublons, puisque c'est la `cle_stable` qui identifie un constat — un résultat
+  // déjà vu est reconnu et compté comme une observation de plus.
+  .post('/relire', async () => {
+    await db.update(connecteurAudit).set({ curseur: null, updatedAt: new Date() }).where(eq(connecteurAudit.id, SINGLETON_AUDIT))
+    return { ok: true as const, message: 'Curseur remis à zéro : la prochaine synchronisation relira tout ce que le moteur garde.' }
+  }, {
+    auth: ['admin'],
+    detail: {
+      summary: 'Remet le curseur à zéro : la prochaine synchronisation relit tout.',
+      description: 'Sans effet sur les constats existants : ils sont reconnus par leur `cle_stable` et comptent une '
+        + 'observation de plus. Utile après une amélioration de la lecture, pour reprendre ce qui est déjà passé.',
+    },
+  })
+
   .post('/synchroniser', async () => {
     const c = await lireConfigAudit()
     // Une synchronisation interrompue (redémarrage) laisse `en_cours` : au-delà de trente

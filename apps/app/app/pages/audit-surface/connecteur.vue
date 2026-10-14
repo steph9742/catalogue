@@ -72,6 +72,13 @@ const enregistrer = () => agir('save', async () => {
 })
 const tester = () => agir('test', () => api<Retour>('/api/audit-surface/test', { method: 'POST', body: { url: f.url, jeton: f.jeton || undefined, dialecte: f.dialecte } }))
 const synchroniser = () => agir('sync', () => api<Retour>('/api/audit-surface/synchroniser', { method: 'POST' }))
+// Relire tout ce que le moteur garde : nécessaire quand la lecture s'améliore, car le
+// curseur, lui, ne sait pas qu'on lit mieux qu'avant.
+const relire = () => agir('relire', async () => {
+  const r = await api<Retour>('/api/audit-surface/relire', { method: 'POST' })
+  await api<Retour>('/api/audit-surface/synchroniser', { method: 'POST' })
+  return r
+})
 
 const CHAMP = 'w-full rounded-lg border border-secondary-200 px-3 py-2 text-sm'
 const LIBELLE = 'mb-1 block font-mono text-[11px] font-semibold uppercase tracking-widest text-secondary-500'
@@ -181,6 +188,14 @@ const LIBELLE = 'mb-1 block font-mono text-[11px] font-semibold uppercase tracki
           @click="synchroniser"
         >
           {{ busy === 'sync' ? 'Synchronisation…' : 'Synchroniser maintenant' }}
+        </UIButton>
+        <UIButton
+          variant="secondary"
+          :disabled="!!busy || !config?.jetonDefini"
+          title="Remet le curseur à zéro, puis synchronise : tout ce que le moteur garde est relu. Les constats déjà connus ne sont pas dupliqués."
+          @click="relire"
+        >
+          {{ busy === 'relire' ? 'Relecture…' : 'Tout relire' }}
         </UIButton>
       </div>
       <p
