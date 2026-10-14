@@ -18,12 +18,17 @@ export const SINGLETON_AUDIT = 'connecteur-audit-singleton'
  */
 function lireArtemis(corps: unknown, curseur: Date | null) {
   const t = traduireResultats(corps, curseur)
+  // Une lecture tronquée est DITE : sans cela, « moins de constats » se lirait comme « moins
+  // de défauts », alors que c'est « on n'a pas tout lu ».
+  const tronque = !!(corps && typeof corps === 'object' && (corps as { tronque?: boolean }).tronque)
   return {
     constats: t.constats,
     actifsReleves: t.actifsReleves.map(a => ({ hote: a.hote, port: a.port, releveLe: new Date(a.releve_le) })),
     jusquA: null,
     pagesBrutes: null,
-    modulesInconnus: t.modulesInconnus,
+    modulesInconnus: tronque
+      ? { ...t.modulesInconnus, 'LECTURE TRONQUÉE (plafond de pages atteint)': 1 }
+      : t.modulesInconnus,
   }
 }
 
@@ -152,8 +157,8 @@ export async function synchroniserAudit(): Promise<CompteursAudit> {
 
     /**
      * RANGE UN CONSTAT — création, ou intégration à l'existant. Écrit une fois pour les
-     * constats du moteur ET les écarts d'intégrité calculés ici : deux chemins d'écriture
-     * auraient deux règles d'idempotence, et l'un doublonnerait.
+     * constats du moteur ET les écarts d'intégrité calculés ici : deux chemins d\'écriture
+     * auraient deux règles d'idempotence, et l\'un doublonnerait.
      */
     const ranger = async (c: ConstatRecu, serviceId: string | null) => {
       vues.add(c.cleStable)

@@ -2,7 +2,7 @@
 // apps/server/test/verif-artemis.ts Trois propriétés, et chacune a un coût précis quand elle
 // tombe : - la CLÉ est stable d'un relevé à l'autre, sinon l'inventaire se remplit de doublons
 // et chaque décision prise (accepté…
-import { cibleDe, cleStable, cvesDe, faitStable, graviteDuScore, modulesConnus, traduireResultats } from '../src/utils/artemis'
+import { cibleDe, cleStable, cvesDe, faitStable, graviteDuScore, listeDeResultats, modulesConnus, traduireResultats } from '../src/utils/artemis'
 import { CATEGORIES_CONSTAT, GRAVITES_CONSTAT, lireConstat } from '../src/utils/constatCycle'
 
 let ko = 0
@@ -131,12 +131,53 @@ console.log('\nLa table de rangement ne peut pas désigner l\'inconnu')
     `les ${modulesConnus().length} modules rangés le sont dans des catégories et gravités qui existent${mauvais.length ? ` — ${mauvais.map(m => m.module).join(', ')}` : ''}`)
 }
 
+console.log('\nL\'enveloppe : tableau nu, ou objet de table paginée')
+{
+  const r = resultat()
+  dire(traduireResultats([r], null).constats.length === 1, 'un tableau nu')
+  dire(traduireResultats({ data: [r], recordsTotal: 1 }, null).constats.length === 1, 'un objet { data } — la forme de la table paginée')
+  dire(traduireResultats({ results: [r] }, null).constats.length === 1, 'un objet { results }')
+}
+
 console.log('\nUne réponse qui n\'est pas une liste est une ERREUR, pas « zéro résultat »')
 {
   let leve = false
   try { traduireResultats({ detail: 'Not Found' }, null) }
   catch { leve = true }
   dire(leve, 'un objet d\'erreur ne se lit pas comme un parc sain')
+  dire(listeDeResultats({ detail: 'Not Found' }) === null, 'et une enveloppe sans liste ne rend rien, plutôt que de rendre ses clés')
+}
+
+console.log('\nLE RÉSUMÉ NE DIT PAS TOUT : le détail est lu aussi')
+{
+  // Le cas relevé sur l'instance : le résumé annonce « 1 known CVE » SANS identifiant, et les
+  // identifiants vivent dans `additional_info`. Ne lire que le résumé les perdait tous.
+  const r = resultat({
+    receiver: 'cve_lookup',
+    status_reason: 'WordPress 7.1.3 has 1 known CVE. Highest CVSS score: 6.8.',
+    // Relevé sur l'instance : les identifiants sont dans `result`, et `additional_info` est nul.
+    result: [{ cve: 'CVE-2007-2627', description: 'Cross-site scripting (XSS) in sidebar.php' }],
+    additional_info: null,
+  })
+  const t = traduireResultats([r], null)
+  const l = lireConstat(t.constats[0])
+  dire(l.ok && (l.constat.reference ?? '').includes('CVE-2007-2627'),
+    `l'identifiant du détail ressort dans la référence (${l.ok ? l.constat.reference : ''})`)
+  dire(l.ok && l.constat.gravite === 'moyenne', 'et le score du résumé (6.8) donne la gravité')
+
+  // Un détail illisible ne doit pas faire tomber la traduction du résumé.
+  const circulaire: Record<string, unknown> = {}
+  circulaire.soi = circulaire
+  const t2 = traduireResultats([resultat({ receiver: 'cve_lookup', additional_info: circulaire })], null)
+  dire(t2.constats.length === 1, 'un détail impossible à sérialiser n\'empêche pas le constat')
+  const t3 = traduireResultats([resultat({
+    receiver: 'cve_lookup',
+    status_reason: '2 CVE(s) found across 2 technologies',
+    result: { 'wordpress': ['CVE-2007-2627'], 'php': ['CVE-2007-3205'] },
+  })], null)
+  const l3 = lireConstat(t3.constats[0])
+  dire(l3.ok && (l3.constat.reference ?? '').includes('CVE-2007-3205'),
+    'un résumé qui ne cite aucun identifiant n\'empêche pas de les lire dans `result`')
 }
 
 console.log('\nLa lecture des CVE et des scores')

@@ -117,18 +117,36 @@ export async function envoyerPerimetre(cfg: AuditConfig, p: Perimetre): Promise<
   if (!r.ok) throw await refus(r, 'le périmètre')
 }
 
-/** Plafond de lecture Artemis : au-delà, la réponse est tronquée et le relevé le DIT. */
-export const MAX_RESULTATS_ARTEMIS = 5000
+// LECTURE D'ARTEMIS : TOUTES LES PAGES, ET PAS SEULEMENT CE QUI EST « INTÉRESSANT ».
+const PAGE_ARTEMIS = 500
+/** Plafond de lecture : au-delà, la réponse est tronquée et le relevé le DIT. */
+export const MAX_PAGES_ARTEMIS = 20
 
 export async function recupererResultats(cfg: AuditConfig, depuis: Date | null): Promise<unknown> {
   if (cfg.dialecte === 'artemis') {
-    // Le filtrage se fait donc à la lecture (utils/artemis.ts). `limit` est envoyé au cas où il
-    // soit honoré : s'il l'est, la réponse est plus légère ; sinon elle est seulement plus
-    // longue.
-    const r = await appeler(cfg, `/api/task-results?limit=${MAX_RESULTATS_ARTEMIS}`, { method: 'GET' })
-    if (!r.ok) throw await refus(r, 'la lecture des résultats')
-    try { return await r.json() }
-    catch { throw new Error('Artemis a rendu une réponse qui n\'est pas du JSON.') }
+    // `depuis` ne part pas : Artemis ne sait pas filtrer par date (`created_at_gt` est accepté
+    // et ignoré). Le filtrage se fait à la lecture, dans utils/artemis.ts.
+    const tout: unknown[] = []
+    let tronque = false
+    for (let page = 1; page <= MAX_PAGES_ARTEMIS; page++) {
+      const chemin = `/api/task-results?only_interesting=false&page=${page}&page_size=${PAGE_ARTEMIS}`
+      const r = await appeler(cfg, chemin, { method: 'GET' })
+      if (!r.ok) throw await refus(r, 'la lecture des résultats')
+      let corps: unknown
+      try { corps = await r.json() }
+      catch { throw new Error('Artemis a rendu une réponse qui n\'est pas du JSON.') }
+      const lignes = Array.isArray(corps) ? corps : null
+      if (!lignes) {
+        // Première page : la forme compte, et une erreur ne doit pas passer pour un parc vide.
+        if (page === 1) return corps
+        break
+      }
+      tout.push(...lignes)
+      // Une page incomplète est la dernière : inutile d'en demander une de plus.
+      if (lignes.length < PAGE_ARTEMIS) { tronque = false; break }
+      tronque = page === MAX_PAGES_ARTEMIS
+    }
+    return { data: tout, tronque }
   }
   const q = depuis ? `?depuis=${encodeURIComponent(depuis.toISOString())}` : ''
   const r = await appeler(cfg, `/resultats${q}`, { method: 'GET' })
@@ -144,8 +162,10 @@ export async function testerConnexionAudit(cfg: AuditConfig): Promise<{ ok: bool
     const liste = Array.isArray(corps)
     const lisible = liste || (!!corps && typeof corps === 'object' && Array.isArray((corps as { constats?: unknown }).constats))
     if (cfg.dialecte === 'artemis') {
-      return liste
-        ? { ok: true, message: `Artemis joint, jeton accepté, ${(corps as unknown[]).length} résultat(s) lisibles.` }
+      // La lecture paginée rend { data, tronque } ; une page unique, un tableau.
+      const lignes = liste ? corps as unknown[] : (corps as { data?: unknown[] })?.data
+      return Array.isArray(lignes)
+        ? { ok: true, message: `Artemis joint, jeton accepté, ${lignes.length} résultat(s) lisibles.` }
         : { ok: false, message: 'Artemis joint et jeton accepté, mais /api/task-results n\'a pas rendu une liste.' }
     }
     return lisible

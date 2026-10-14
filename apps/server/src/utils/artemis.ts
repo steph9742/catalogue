@@ -2,11 +2,17 @@ import { createHash } from 'node:crypto'
 
 // Pur. POURQUOI ICI, ET PAS DANS UN ADAPTATEUR.
 
-/** Ce qu'on lit d'un résultat Artemis. Tout le reste est ignoré. */
+/** Ce qu'on lit d\'un résultat Artemis. Tout le reste est ignoré. */
 export type ResultatArtemis = {
   status?: unknown
   receiver?: unknown
   status_reason?: unknown
+  /**
+   * CE QUE LE RÉSUMÉ NE DIT PAS. `status_reason` annonce « 2 CVE(s) found across 2 technologies
+   * » — sans le moindre identifiant.
+   */
+  result?: unknown
+  additional_info?: unknown
   created_at?: unknown
   task?: { payload?: { domain?: unknown, url?: unknown }, payload_persistent?: { original_target?: unknown } }
 }
@@ -35,6 +41,10 @@ const REGLES: Record<string, Regle> = {
   // Détection de vulnérabilités. La gravité écrite ici est un DÉFAUT : quand le résultat
   // porte un score CVSS, c'est lui qui tranche (voir `graviteDuScore`).
   nuclei: { categorie: 'vulnerabilite', gravite: 'elevee' },
+  // Le nom porté par les résultats est « nuclei-module », pas « nuclei » : relevé sur une
+  // instance, et c'est exactement le genre d'écart qui fait qu'un module n'est pas traduit sans
+  // que rien ne casse.
+  'nuclei-module': { categorie: 'vulnerabilite', gravite: 'elevee' },
   cve_lookup: { categorie: 'vulnerabilite', gravite: 'elevee' },
   cve_finder: { categorie: 'vulnerabilite', gravite: 'elevee' },
   vcs: { categorie: 'fichier_expose', gravite: 'elevee' },
@@ -64,9 +74,24 @@ const texte = (v: unknown): string | null => (typeof v === 'string' && v.trim() 
 
 const MOTIF_CVE = /CVE-\d{4}-\d{4,7}/gi
 
-/** Les CVE citées par un résultat, dédoublonnées et triées — l'ordre du texte n'est pas stable. */
+/** Les CVE citées par un texte, dédoublonnées et triées — l'ordre de citation n\'est pas stable. */
 export function cvesDe(raison: string): string[] {
   return [...new Set([...raison.matchAll(MOTIF_CVE)].map(m => m[0].toUpperCase()))].sort()
+}
+
+/**
+ * Tout ce qu'un résultat porte de lisible, résumé ET détail. `additional_info` n\'a pas de forme
+ * fixe d'un module à l\'autre : liste, objet, texte.
+ */
+export function texteComplet(r: ResultatArtemis): string {
+  const morceaux = [texte(r.status_reason) ?? '']
+  for (const bloc of [r.result, r.additional_info]) {
+    if (bloc === null || bloc === undefined) continue
+    try { morceaux.push(typeof bloc === 'string' ? bloc : JSON.stringify(bloc)) }
+    catch { /* un bloc impossible à sérialiser ne doit pas emporter le reste */ }
+  }
+  // Borné : un détail de plusieurs mégaoctets n'apporte rien de plus et coûte à chaque ligne.
+  return morceaux.filter(Boolean).join(' ').slice(0, 20000)
 }
 
 /**
@@ -86,7 +111,7 @@ export function graviteDuScore(raison: string): string | null {
 }
 
 /**
- * La cible d'un résultat : l'hôte, et le port quand il est dit. `payload.domain` est renseigné
+ * La cible d'un résultat : l\'hôte, et le port quand il est dit. `payload.domain` est renseigné
  * par le classificateur ; `payload_persistent.original_target` garde ce qui a été demandé.
  */
 export function cibleDe(r: ResultatArtemis): { hote: string, port: number | null, url: string | null } | null {
@@ -111,7 +136,7 @@ export function cibleDe(r: ResultatArtemis): { hote: string, port: number | null
 }
 
 /**
- * CE QUI, DANS UN CONSTAT, NE DOIT PAS BOUGER D'UN RELEVÉ À L'AUTRE. `status_reason` porte le
+ * CE QUI, DANS UN CONSTAT, NE DOIT PAS BOUGER D'UN RELEVÉ À L\'AUTRE. `status_reason` porte le
  * fait ET des détails volatils : une version de serveur, une durée, un horodatage.
  */
 export function faitStable(receiver: string, raison: string): string {
@@ -151,9 +176,23 @@ const dateDe = (v: unknown): Date | null => {
  * Traduit une page de résultats Artemis. Un filtre côté serveur qu'on croit actif est pire
  * qu'une absence de filtre.
  */
+/**
+ * LA LISTE, QUELLE QUE SOIT SON ENVELOPPE. `/api/task-results` rend un tableau nu sur
+ * l'instance mesurée.
+ */
+export function listeDeResultats(corps: unknown): unknown[] | null {
+  if (Array.isArray(corps)) return corps
+  if (!corps || typeof corps !== 'object') return null
+  for (const cle of ['data', 'results', 'items', 'task_results']) {
+    const v = (corps as Record<string, unknown>)[cle]
+    if (Array.isArray(v)) return v
+  }
+  return null
+}
+
 export function traduireResultats(corps: unknown, depuis: Date | null): Traduction {
   const t: Traduction = { constats: [], actifsReleves: [], sansInteret: 0, modulesInconnus: {} }
-  const lignes = Array.isArray(corps) ? corps : Array.isArray((corps as { results?: unknown[] })?.results) ? (corps as { results: unknown[] }).results : null
+  const lignes = listeDeResultats(corps)
   if (!lignes) throw new Error('Artemis n\'a pas rendu une liste de résultats.')
 
   const vus = new Set<string>()
@@ -176,20 +215,28 @@ export function traduireResultats(corps: unknown, depuis: Date | null): Traducti
     }
 
     if (texte(r.status)?.toUpperCase() !== 'INTERESTING') { t.sansInteret++; continue }
+    // `cve_lookup` rend une structure, pas une phrase : on la lit comme telle, et chaque CVE
+    // devient son propre constat avec son propre score.
+    if (receiver === 'cve_lookup') {
+      const detaillees = constatsDeCveLookup(r, cible, releveLe)
+      if (detaillees) { t.constats.push(...detaillees); continue }
+    }
     const regle = REGLES[receiver]
     if (!regle) {
       t.modulesInconnus[receiver] = (t.modulesInconnus[receiver] ?? 0) + 1
       continue
     }
     const raison = texte(r.status_reason) ?? regle.categorie
-    const fait = faitStable(receiver, raison)
-    const cves = cvesDe(raison)
+    // Le détail porte les identifiants que le résumé tait ; le résumé porte souvent le score.
+    const complet = texteComplet(r)
+    const fait = faitStable(receiver, complet === raison ? raison : `${raison} ${cvesDe(complet).join(',')}`)
+    const cves = cvesDe(complet)
     t.constats.push({
       cle_stable: cleStable(receiver, cible.hote, cible.port, fait),
       actif: { hote: cible.hote, port: cible.port, url: cible.url },
       releve_le: releveLe.toISOString(),
       categorie: regle.categorie,
-      gravite: graviteDuScore(raison) ?? regle.gravite,
+      gravite: graviteDuScore(complet) ?? regle.gravite,
       titre: `${receiver} — ${raison}`.slice(0, 300),
       detail: raison,
       preuve: null,
@@ -199,6 +246,58 @@ export function traduireResultats(corps: unknown, depuis: Date | null): Traducti
     })
   }
   return t
+}
+
+/**
+ * LE CAS `cve_lookup` : UN CONSTAT PAR CVE, et non un constat par relevé.
+ */
+type CveTrouvee = { id?: unknown, description?: unknown, cvss_score?: unknown }
+type TechnologieTrouvee = { technology_name?: unknown, technology_version?: unknown, cpe?: unknown, cves?: unknown }
+
+function constatsDeCveLookup(r: ResultatArtemis, cible: { hote: string, port: number | null, url: string | null }, releveLe: Date): unknown[] | null {
+  const res = (r.result ?? null) as { url?: unknown, findings?: unknown } | null
+  if (!res || typeof res !== 'object' || !Array.isArray(res.findings)) return null
+
+  // L'URL du relevé porte le port, que la charge utile de la tâche ne donne pas toujours.
+  let hote = cible.hote
+  let port = cible.port
+  const url = texte(res.url) ?? cible.url
+  if (url) {
+    try {
+      const u = new URL(url)
+      hote = u.hostname.toLowerCase()
+      port = u.port ? Number(u.port) : (u.protocol === 'https:' ? 443 : 80)
+    }
+    catch { /* une URL illisible laisse la cible de la tâche */ }
+  }
+
+  const constats: unknown[] = []
+  for (const brut of res.findings as TechnologieTrouvee[]) {
+    const techno = texte(brut?.technology_name)
+    const version = texte(brut?.technology_version)
+    if (!Array.isArray(brut?.cves)) continue
+    for (const c of brut.cves as CveTrouvee[]) {
+      const id = texte(c?.id)?.toUpperCase()
+      if (!id || !MOTIF_CVE.test(id)) continue
+      MOTIF_CVE.lastIndex = 0
+      const score = typeof c?.cvss_score === 'number' ? c.cvss_score : Number(texte(c?.cvss_score) ?? NaN)
+      const produit = [techno, version].filter(Boolean).join(' ') || 'technologie non nommée'
+      constats.push({
+        cle_stable: cleStable('cve_lookup', hote, port, `cve:${techno ?? ''}:${id}`),
+        actif: { hote, port, url },
+        releve_le: releveLe.toISOString(),
+        categorie: 'vulnerabilite',
+        gravite: graviteDuScore(`cvss ${Number.isFinite(score) ? score : ''}`) ?? 'elevee',
+        titre: `${produit} — ${id}`.slice(0, 300),
+        detail: texte(c?.description),
+        // La preuve, c'est le CPE : il dit SUR QUOI la correspondance a été faite, donc ce
+        // qu'il faut vérifier quand on conteste le constat.
+        preuve: texte(brut?.cpe),
+        reference: `${id} (artemis:cve_lookup)`,
+      })
+    }
+  }
+  return constats.length ? constats : null
 }
 
 /** Les modules rangés, pour l'écran de réglages : ce qui sera traduit, et comment. */

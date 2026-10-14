@@ -43,14 +43,16 @@ const api = useApi()
 const perms = await usePermissions()
 const modifiable = computed(() => perms.canPropose('audit-surface'))
 
-const filtre = reactive({ statut: 'ouvert', gravite: '' })
+const filtre = reactive({ statut: 'ouvert', gravite: '', categorie: '' })
 const { data: resume, refresh: rafraichirResume } = await useAsyncData(
   'audit-resume', () => api<Resume>('/api/audit-surface/resume'), { getCachedData: () => undefined },
 )
 const { data: constats, refresh: rafraichirConstats } = await useAsyncData(
   'audit-constats',
-  () => api<{ total: number, resultats: Constat[] }>('/api/audit-surface/constats', { query: { statut: filtre.statut || undefined, gravite: filtre.gravite || undefined } }),
-  { watch: [() => filtre.statut, () => filtre.gravite], getCachedData: () => undefined },
+  () => api<{ total: number, resultats: Constat[] }>('/api/audit-surface/constats', {
+    query: { statut: filtre.statut || undefined, gravite: filtre.gravite || undefined, categorie: filtre.categorie || undefined },
+  }),
+  { watch: [() => filtre.statut, () => filtre.gravite, () => filtre.categorie], getCachedData: () => undefined },
 )
 const { data: decouvertes, refresh: rafraichirDecouvertes } = await useAsyncData(
   'audit-decouvertes', () => api<Constat[]>('/api/audit-surface/decouvertes'), { getCachedData: () => undefined },
@@ -58,6 +60,24 @@ const { data: decouvertes, refresh: rafraichirDecouvertes } = await useAsyncData
 const { data: personnes } = await useAsyncData(
   'audit-personnes', () => api<Personne[]>('/api/personnes').catch(() => []), { getCachedData: () => undefined },
 )
+
+// LES CATÉGORIES, telles que le serveur les accepte (CATEGORIES_CONSTAT). Une valeur hors
+// liste est refusée en 400 : mieux vaut choisir que saisir.
+const CATEGORIE: Record<string, string> = {
+  vulnerabilite: 'Vulnérabilité (CVE)',
+  certificat: 'Certificat',
+  tls: 'TLS',
+  entete: 'En-têtes',
+  fichier_expose: 'Fichier exposé',
+  outil_expose: 'Outil exposé',
+  version: 'Version',
+  dns: 'DNS',
+  reputation: 'Réputation',
+  integrite_script: 'Intégrité des scripts',
+  compromission: 'Compromission',
+  classement: 'Classement',
+  port: 'Port ouvert',
+}
 
 const GRAVITE: Record<string, { l: string, t: string }> = {
   critique: { l: 'Critique', t: 'red' },
@@ -310,6 +330,21 @@ const ecarter = async (d: Constat) => {
           </option>
         </select>
         <select
+          v-model="filtre.categorie"
+          class="rounded-lg border border-secondary-200 px-2 py-1 text-sm"
+        >
+          <option value="">
+            Toutes les catégories
+          </option>
+          <option
+            v-for="(l, k) in CATEGORIE"
+            :key="k"
+            :value="k"
+          >
+            {{ l }}
+          </option>
+        </select>
+        <select
           v-model="filtre.gravite"
           class="rounded-lg border border-secondary-200 px-2 py-1 text-sm"
         >
@@ -356,7 +391,7 @@ const ecarter = async (d: Constat) => {
             {{ c.actifHote }}<span v-if="c.actifPort">:{{ c.actifPort }}</span>
           </NuxtLink>
           <span v-else>{{ c.actifHote }}<span v-if="c.actifPort">:{{ c.actifPort }}</span> (hors inventaire)</span>
-          · {{ c.categorie }} · vu {{ c.observations }} fois, du {{ date(c.premierReleveLe) }} au {{ date(c.dernierReleveLe) }}
+          · {{ CATEGORIE[c.categorie] ?? c.categorie }} · vu {{ c.observations }} fois, du {{ date(c.premierReleveLe) }} au {{ date(c.dernierReleveLe) }}
           <span v-if="c.reference"> · {{ c.reference }}</span>
           <span
             v-if="c.reouvertLe"

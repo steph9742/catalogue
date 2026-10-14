@@ -89,6 +89,17 @@ const CERT: Record<string, { l: string, t: string }> = {
 /**
  * Le libellé de la mise à jour. PAS DE FRACTION.
  */
+// LES CONSTATS OUVERTS PAR SERVICE, comptés par la base. Un service « sans pastille » n'a pas
+// de constat ouvert ; il peut n'avoir jamais été relevé, ce que la fiche dit et pas la liste.
+const { data: constatsParService } = await useAsyncData(
+  'sites-constats',
+  () => api<Record<string, { total: number, pireGravite: string }>>('/api/audit-surface/par-service').catch(() => null),
+  { getCachedData: () => undefined },
+)
+const TON_GRAVITE: Record<string, string> = {
+  critique: 'red', elevee: 'red', moyenne: 'amber', faible: 'blue', info: 'gray',
+}
+
 const search = ref('')
 const activeFilters = ref<Record<string, (string | number)[]>>({})
 
@@ -600,6 +611,13 @@ const fmt = (iso: string | null) =>
           </Pill>
           <Pill :tone="CERT[s.certificat]?.t ?? 'gray'">
             {{ CERT[s.certificat]?.l ?? s.certificat }}
+          </Pill>
+          <!-- Ce que le moteur d'audit a relevé, et qui n'est pas encore tranché. -->
+          <Pill
+            v-if="constatsParService?.[s.id]"
+            :tone="TON_GRAVITE[constatsParService[s.id]!.pireGravite] ?? 'gray'"
+          >
+            {{ constatsParService[s.id]!.total }} constat{{ constatsParService[s.id]!.total > 1 ? 's' : '' }}
           </Pill>
         </div>
       </NuxtLink>

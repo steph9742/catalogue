@@ -194,6 +194,37 @@ console.log('\nLe client : jeton, périmètre, curseur, aucune redirection')
   srv.stop(true)
 }
 
+console.log('\nArtemis : toutes les pages, et pas seulement l\'intéressant')
+{
+  const pagesDemandees: number[] = []
+  let interessantSeulement: string | null = ''
+  const srv = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const u = new URL(req.url)
+      if (u.pathname !== '/api/task-results') return new Response('?', { status: 404 })
+      interessantSeulement = u.searchParams.get('only_interesting')
+      const page = Number(u.searchParams.get('page') ?? 1)
+      const taille = Number(u.searchParams.get('page_size') ?? 100)
+      pagesDemandees.push(page)
+      // 1 200 résultats : deux pages pleines, puis une partielle.
+      const restant = Math.max(0, Math.min(taille, 1200 - (page - 1) * taille))
+      return Response.json(Array.from({ length: restant }, (_, i) => ({
+        status: 'OK', receiver: 'port_scanner', created_at: '2026-10-13T08:00:00',
+        task: { payload: { domain: `h${(page - 1) * taille + i}.exemple.fr` } },
+      })))
+    },
+  })
+  const cfg = { url: `http://127.0.0.1:${srv.port}`, jeton: 'abc', dialecte: 'artemis' as const }
+  const corps = await recupererResultats(cfg, null) as { data: unknown[], tronque: boolean }
+  dire(corps.data.length === 1200, `les pages sont enchaînées jusqu'au bout (${corps.data.length} résultats)`)
+  dire(pagesDemandees.join() === '1,2,3', 'une page incomplète arrête la lecture : pas d\'appel de trop')
+  dire(interessantSeulement === 'false',
+    'tout est demandé, pas seulement « intéressant » — sinon aucun actif sain ne remonte, et aucune correction ne se confirme')
+  dire(corps.tronque === false, 'et la lecture n\'est pas annoncée tronquée quand elle est complète')
+  srv.stop(true)
+}
+
 console.log('\nLe dialecte Artemis : autre en-tête, autres routes')
 {
   let entete = ''

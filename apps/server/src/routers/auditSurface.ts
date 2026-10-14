@@ -1,5 +1,5 @@
 import { Elysia, t } from 'elysia'
-import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm'
 import { db } from '@catalogue/database'
 import { composante, connecteurAudit, connecteurSlowpoke, constat, glpiMachine, personne, serviceExpose } from '@catalogue/database/tables'
 import { betterAuth } from '../middleware/auth'
@@ -250,6 +250,38 @@ export const auditSurfaceRouter = new Elysia({ name: 'audit-surface', prefix: '/
   })
 
   // --- Découvertes ---------------------------------------------------------------------
+  // COMBIEN DE CONSTATS OUVERTS PAR SERVICE, et le plus grave de chacun. Compté par la base,
+  // pas déduit d'une liste chargée dans la page : la liste des services en compte des
+  // centaines, et les ports ouverts font à eux seuls un constat par hôte.
+  .get('/par-service', async () => {
+    const lignes = await db.select({
+      serviceId: constat.serviceId,
+      gravite: constat.gravite,
+      n: sql<number>`count(*)::int`,
+    }).from(constat)
+      .where(and(eq(constat.statut, 'ouvert'), ne(constat.categorie, 'decouverte'), isNotNull(constat.serviceId)))
+      .groupBy(constat.serviceId, constat.gravite)
+
+    // L'ordre du vocabulaire, pas l'alphabet : « critique » avant « élevée ».
+    const rang = ['critique', 'elevee', 'moyenne', 'faible', 'info']
+    const par: Record<string, { total: number, pireGravite: string }> = {}
+    for (const l of lignes) {
+      const cle = l.serviceId!
+      const e = par[cle] ?? { total: 0, pireGravite: 'info' }
+      e.total += l.n
+      if (rang.indexOf(l.gravite) < rang.indexOf(e.pireGravite)) e.pireGravite = l.gravite
+      par[cle] = e
+    }
+    return par
+  }, {
+    can: { category: 'audit-surface', level: 'read' },
+    detail: {
+      summary: 'Constats OUVERTS par service exposé : nombre et gravité la plus haute.',
+      description: 'Hors découvertes. Un service absent de la réponse n\'a aucun constat ouvert — ce qui n\'est pas '
+        + 'la même chose qu\'un service jamais relevé : la fiche du service, elle, le distingue.',
+    },
+  })
+
   .get('/decouvertes', async ({ query, status }) => {
     const traitement = query.traitement ?? 'a_valider'
     if (!dansListe(TRAITEMENTS, traitement)) return status(400, `Traitement inconnu : ${traitement}`)

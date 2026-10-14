@@ -204,6 +204,63 @@ const { data: pages, refresh: rafraichirPages } = await useAsyncData(
   () => api<PageCible[]>(`/api/sites-services/${route.params.id}/pages`).catch(() => null),
   { getCachedData: () => undefined },
 )
+// LES CONSTATS DU MOTEUR D'AUDIT, rattachés à ce service par l'hôte et le port au moment de la
+// synchronisation.
+type ConstatSite = {
+  id: string
+  categorie: string
+  gravite: string
+  statut: string
+  titre: string
+  reference: string | null
+  observations: number
+  dernierReleveLe: string
+}
+const { data: constats } = await useAsyncData(
+  () => `site-constats-${route.params.id}`,
+  () => api<{ total: number, resultats: ConstatSite[] }>('/api/audit-surface/constats', {
+    query: { serviceId: String(route.params.id), statut: 'ouvert' },
+  }).catch(() => null),
+  { getCachedData: () => undefined },
+)
+const CATEGORIE_CONSTAT: Record<string, string> = {
+  vulnerabilite: 'Vulnérabilité (CVE)', certificat: 'Certificat', tls: 'TLS', entete: 'En-têtes',
+  fichier_expose: 'Fichier exposé', outil_expose: 'Outil exposé', version: 'Version', dns: 'DNS',
+  reputation: 'Réputation', integrite_script: 'Intégrité des scripts', compromission: 'Compromission',
+  classement: 'Classement', port: 'Port ouvert', decouverte: 'Découverte',
+}
+const TON_GRAVITE: Record<string, string> = {
+  critique: 'red', elevee: 'red', moyenne: 'amber', faible: 'blue', info: 'gray',
+}
+const LIBELLE_GRAVITE: Record<string, string> = {
+  critique: 'Critique', elevee: 'Élevée', moyenne: 'Moyenne', faible: 'Faible', info: 'Info',
+}
+// L'ordre du vocabulaire, pas l'ordre alphabétique : « critique » avant « élevée », et non
+// « critique » avant « faible » avant « info ».
+const RANG_GRAVITE = ['critique', 'elevee', 'moyenne', 'faible', 'info']
+const constatsTries = computed(() => [...(constats.value?.resultats ?? [])]
+  .sort((a, b) => RANG_GRAVITE.indexOf(a.gravite) - RANG_GRAVITE.indexOf(b.gravite)
+    || b.dernierReleveLe.localeCompare(a.dernierReleveLe)))
+
+// LES CVE À PART, ET PRÉSENTÉES COMME DES CVE. Un identifiant se lit, se recopie dans un ticket
+// et se cherche dans un bulletin : noyé dans un intitulé de constat, il faut le repérer à
+// l'œil.
+const MOTIF_CVE = /CVE-\d{4}-\d{4,7}/g
+const cvesDe = (c: ConstatSite) => [...new Set((c.reference ?? '').match(MOTIF_CVE) ?? [])]
+
+const vulnerabilites = computed(() => constatsTries.value.flatMap(c =>
+  cvesDe(c).map(cve => ({ cve, constat: c }))))
+const autresConstats = computed(() => constatsTries.value.filter(c => cvesDe(c).length === 0))
+
+// Le contexte d'une CVE : l'intitulé du constat, débarrassé du module et des identifiants
+// qu'on affiche déjà en tête de ligne — sinon la même chaîne apparaît deux fois.
+const contexteCve = (c: ConstatSite) => c.titre
+  .replace(/^[a-z_]+\s+—\s+/i, '')
+  .replace(MOTIF_CVE, '')
+  .replace(/\(\s*\)|\[\s*\]/g, '')
+  .replace(/\s{2,}/g, ' ')
+  .replace(/^[\s,;:–—-]+|[\s,;:–—-]+$/g, '')
+
 const NATURE_PAGE: Record<string, string> = {
   paiement: 'Paiement', panier: 'Panier', connexion: 'Connexion', donnees_personnelles: 'Données personnelles', autre: 'Autre',
 }
@@ -844,6 +901,93 @@ const fmt = (iso: string | null | undefined) =>
       >
         {{ msgExposition }}
       </p>
+    </section>
+
+    <!-- CE QUE LE MOTEUR D'AUDIT A RELEVÉ SUR CE SERVICE. La même liste que la page Audit de surface, filtrée sur ce service : deux écrans qui compteraient chacun de leur côté finiraient par se contredire, et c'est l'écran le plus consulté qu'on croirait. -->
+    <section
+      v-if="constats"
+      class="rounded-2xl border border-secondary-200/60 bg-white p-5 shadow-sm"
+    >
+      <h2 class="mb-1 text-sm font-semibold text-secondary-900">
+        Vulnérabilités connues (CVE)
+      </h2>
+      <p class="mb-3 text-xs text-secondary-500">
+        Relevées depuis Internet par le moteur d'audit. La gravité vient du score CVSS quand le relevé en porte un.
+      </p>
+      <p
+        v-if="!vulnerabilites.length"
+        class="mb-5 text-sm text-secondary-500"
+      >
+        Aucune CVE relevée. <span class="text-secondary-400">Cela ne veut pas dire « aucune vulnérabilité » : seul ce qui se voit de l'extérieur est relevé, et un service jamais relevé n'a rien non plus.</span>
+      </p>
+      <ul
+        v-else
+        class="mb-5 space-y-1.5"
+      >
+        <li
+          v-for="v in vulnerabilites"
+          :key="`${v.constat.id}-${v.cve}`"
+          class="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-xl border border-secondary-200/60 px-3 py-2"
+        >
+          <!-- L'IDENTIFIANT D'ABORD : c'est ce qu'on cherche des yeux, ce qu'on recopie dans un
+               ticket, et ce qui se porte dans un bulletin. Le lien va au catalogue public. -->
+          <a
+            :href="`https://nvd.nist.gov/vuln/detail/${v.cve}`"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="font-mono text-sm font-semibold text-primary-700 hover:underline"
+          >{{ v.cve }}</a>
+          <Pill :tone="TON_GRAVITE[v.constat.gravite] ?? 'gray'">
+            {{ LIBELLE_GRAVITE[v.constat.gravite] ?? v.constat.gravite }}
+          </Pill>
+          <span class="min-w-0 flex-1 text-sm text-secondary-700">{{ contexteCve(v.constat) }}</span>
+          <span class="text-[11px] text-secondary-400">vu {{ v.constat.observations }} fois · dernier relevé le {{ fmt(v.constat.dernierReleveLe) }}</span>
+        </li>
+      </ul>
+
+      <h2 class="mb-1 text-sm font-semibold text-secondary-900">
+        Autres constats de l'audit de surface
+      </h2>
+      <p class="mb-3 text-xs text-secondary-500">
+        Relevés depuis Internet par le moteur d'audit, et <strong>ouverts</strong> : ni acceptés, ni corrigés.
+        Les décisions se prennent sur la page <NuxtLink
+          to="/audit-surface"
+          class="text-primary-700 hover:underline"
+        >Audit de surface</NuxtLink>, où le motif et l'auteur sont conservés.
+      </p>
+      <p
+        v-if="!autresConstats.length"
+        class="text-sm text-secondary-500"
+      >
+        Aucun autre constat ouvert. <span class="text-secondary-400">Ce n'est pas « aucun défaut » : un service jamais relevé n'a pas de constat non plus.</span>
+      </p>
+      <ul
+        v-else
+        class="space-y-2"
+      >
+        <li
+          v-for="c in autresConstats"
+          :key="c.id"
+          class="rounded-xl border border-secondary-200/60 px-3 py-2"
+        >
+          <div class="flex flex-wrap items-center gap-2">
+            <Pill :tone="TON_GRAVITE[c.gravite] ?? 'gray'">
+              {{ LIBELLE_GRAVITE[c.gravite] ?? c.gravite }}
+            </Pill>
+            <span class="text-sm font-medium text-secondary-900">{{ c.titre }}</span>
+          </div>
+          <p class="mt-0.5 flex flex-wrap gap-x-3 text-[11px] text-secondary-500">
+            <span>{{ CATEGORIE_CONSTAT[c.categorie] ?? c.categorie }}</span>
+            <!-- LA RÉFÉRENCE PORTE LES CVE quand il y en a : c'est ce qu'on recopie dans un ticket. -->
+            <span
+              v-if="c.reference"
+              class="font-mono text-secondary-600"
+            >{{ c.reference }}</span>
+            <span>vu {{ c.observations }} fois</span>
+            <span class="text-secondary-400">dernier relevé le {{ fmt(c.dernierReleveLe) }}</span>
+          </p>
+        </li>
+      </ul>
     </section>
 
     <!-- PAGES CIBLES ET INTÉGRITÉ DES SCRIPTS. -->
