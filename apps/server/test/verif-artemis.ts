@@ -2,7 +2,7 @@
 // apps/server/test/verif-artemis.ts Trois propriétés, et chacune a un coût précis quand elle
 // tombe : - la CLÉ est stable d'un relevé à l'autre, sinon l'inventaire se remplit de doublons
 // et chaque décision prise (accepté…
-import { cibleDe, cleStable, faitStable, modulesConnus, traduireResultats } from '../src/utils/artemis'
+import { cibleDe, cleStable, cvesDe, faitStable, graviteDuScore, modulesConnus, traduireResultats } from '../src/utils/artemis'
 import { CATEGORIES_CONSTAT, GRAVITES_CONSTAT, lireConstat } from '../src/utils/constatCycle'
 
 let ko = 0
@@ -58,6 +58,37 @@ console.log('\nLa traduction passe par la MÊME validation que le contrat')
   }
 }
 
+console.log('\nLES CVE : relevées, et ce sont elles qui portent la gravité')
+{
+  const r = resultat({
+    receiver: 'cve_lookup',
+    status_reason: 'Drupal 10.1.4 is vulnerable to CVE-2024-45440 (CVSS: 9.8) and CVE-2023-31250, upgrade to 10.1.8',
+  })
+  const t = traduireResultats([r], null)
+  const l = lireConstat(t.constats[0])
+  dire(l.ok && l.constat.categorie === 'vulnerabilite', 'un résultat cve_lookup devient un constat de vulnérabilité')
+  dire(l.ok && (l.constat.reference ?? '').startsWith('CVE-2023-31250 CVE-2024-45440'),
+    `les CVE sont rendues dans la référence, triées (${l.ok ? l.constat.reference : ''})`)
+  dire(l.ok && l.constat.gravite === 'critique', 'un CVSS de 9.8 fait un constat CRITIQUE, pas « élevé » par défaut')
+
+  const moyen = traduireResultats([resultat({ receiver: 'nuclei', status_reason: 'CVE-2021-1111 (CVSS 5.3) sur /x' })], null)
+  const lm = lireConstat(moyen.constats[0])
+  dire(lm.ok && lm.constat.gravite === 'moyenne', 'un CVSS de 5.3 fait un constat moyen')
+  const sansScore = traduireResultats([resultat({ receiver: 'cve_lookup', status_reason: 'CVE-2021-1111 sur /x' })], null)
+  const ls = lireConstat(sansScore.constats[0])
+  dire(ls.ok && ls.constat.gravite === 'elevee', 'sans score, la gravité du module s\'applique')
+
+  // La clé suit les CVE : une version qui change dans le texte ne crée pas un second constat.
+  dire(faitStable('cve_lookup', 'Drupal 10.1.4 vulnerable to CVE-2024-45440, upgrade to 10.1.8')
+    === faitStable('cve_lookup', 'Drupal 10.1.6 vulnerable to CVE-2024-45440, upgrade to 10.2.1'),
+  'même CVE, versions différentes dans le texte : un seul constat')
+  dire(faitStable('cve_lookup', 'CVE-2024-45440 and CVE-2023-31250')
+    === faitStable('cve_lookup', 'CVE-2023-31250, CVE-2024-45440'),
+  'l\'ordre de citation des CVE ne crée pas de doublon')
+  dire(faitStable('cve_lookup', 'CVE-2024-45440') !== faitStable('cve_lookup', 'CVE-2024-45440 and CVE-2025-10001'),
+    'une CVE de plus est un autre fait')
+}
+
 console.log('\nCE QUI N\'EST PAS TRADUIT est compté et NOMMÉ')
 {
   const t = traduireResultats([
@@ -107,6 +138,14 @@ console.log('\nUne réponse qui n\'est pas une liste est une ERREUR, pas « zér
   catch { leve = true }
   dire(leve, 'un objet d\'erreur ne se lit pas comme un parc sain')
 }
+
+console.log('\nLa lecture des CVE et des scores')
+dire(cvesDe('rien ici').length === 0 && cvesDe('cve-2024-0001 et CVE-2024-0001').length === 1,
+  'les CVE sont dédoublonnées, quelle que soit la casse')
+dire(graviteDuScore('CVSS: 9.8') === 'critique' && graviteDuScore('cvss 7.0') === 'elevee'
+  && graviteDuScore('CVSS score of 3,9') === 'faible' && graviteDuScore('aucun score') === null,
+'les bornes CVSS sont celles du FIRST, et un texte sans score ne fabrique pas de gravité')
+dire(graviteDuScore('CVSS: 42') === null, 'un score hors échelle est ignoré plutôt que ramené au plafond')
 
 console.log(ko ? `\n${ko} CONTRÔLE(S) EN ÉCHEC` : '\nTOUS LES CONTRÔLES PASSENT')
 process.exit(ko ? 1 : 0)

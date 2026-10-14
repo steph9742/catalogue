@@ -32,8 +32,11 @@ const REGLES: Record<string, Regle> = {
   ftp_bruter: { categorie: 'outil_expose', gravite: 'elevee' },
   admin_panel_login_bruter: { categorie: 'outil_expose', gravite: 'elevee' },
   humble: { categorie: 'entete', gravite: 'faible' },
-  // Détection de vulnérabilités.
+  // Détection de vulnérabilités. La gravité écrite ici est un DÉFAUT : quand le résultat
+  // porte un score CVSS, c'est lui qui tranche (voir `graviteDuScore`).
   nuclei: { categorie: 'vulnerabilite', gravite: 'elevee' },
+  cve_lookup: { categorie: 'vulnerabilite', gravite: 'elevee' },
+  cve_finder: { categorie: 'vulnerabilite', gravite: 'elevee' },
   vcs: { categorie: 'fichier_expose', gravite: 'elevee' },
   // Versions et produits.
   wordpress_plugins: { categorie: 'version', gravite: 'moyenne' },
@@ -58,6 +61,29 @@ const REGLES: Record<string, Regle> = {
 }
 
 const texte = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null)
+
+const MOTIF_CVE = /CVE-\d{4}-\d{4,7}/gi
+
+/** Les CVE citées par un résultat, dédoublonnées et triées — l'ordre du texte n'est pas stable. */
+export function cvesDe(raison: string): string[] {
+  return [...new Set([...raison.matchAll(MOTIF_CVE)].map(m => m[0].toUpperCase()))].sort()
+}
+
+/**
+ * LA GRAVITÉ VIENT DU SCORE QUAND IL Y EN A UN. Une CVE sans son score serait rangée comme
+ * toutes les autres : « élevée », y compris pour une faille mineure, et le compteur de
+ * critiques cesserait de vouloir dire quelque chose.
+ */
+export function graviteDuScore(raison: string): string | null {
+  const m = /\bcvss[^0-9]{0,12}(\d{1,2}(?:[.,]\d)?)/i.exec(raison)
+  if (!m) return null
+  const score = Number(m[1]!.replace(',', '.'))
+  if (!Number.isFinite(score) || score < 0 || score > 10) return null
+  if (score >= 9) return 'critique'
+  if (score >= 7) return 'elevee'
+  if (score >= 4) return 'moyenne'
+  return score > 0 ? 'faible' : 'info'
+}
 
 /**
  * La cible d'un résultat : l'hôte, et le port quand il est dit. `payload.domain` est renseigné
@@ -89,6 +115,10 @@ export function cibleDe(r: ResultatArtemis): { hote: string, port: number | null
  * fait ET des détails volatils : une version de serveur, une durée, un horodatage.
  */
 export function faitStable(receiver: string, raison: string): string {
+  // Des CVE citées : ELLES sont le fait. Le texte autour nomme des versions qui changeront au
+  // premier correctif partiel, et le constat se dédoublerait à chaque passage.
+  const cves = cvesDe(raison)
+  if (cves.length) return `cve:${cves.join(',')}`
   if (receiver === 'port_scanner') {
     const ports = [...raison.matchAll(/\b(\d{1,5})\b(?=\s*\()/g)].map(m => Number(m[1]))
     if (ports.length) return `ports:${[...new Set(ports)].sort((a, b) => a - b).join(',')}`
@@ -153,18 +183,19 @@ export function traduireResultats(corps: unknown, depuis: Date | null): Traducti
     }
     const raison = texte(r.status_reason) ?? regle.categorie
     const fait = faitStable(receiver, raison)
+    const cves = cvesDe(raison)
     t.constats.push({
       cle_stable: cleStable(receiver, cible.hote, cible.port, fait),
       actif: { hote: cible.hote, port: cible.port, url: cible.url },
       releve_le: releveLe.toISOString(),
       categorie: regle.categorie,
-      gravite: regle.gravite,
+      gravite: graviteDuScore(raison) ?? regle.gravite,
       titre: `${receiver} — ${raison}`.slice(0, 300),
       detail: raison,
       preuve: null,
-      // Le module reste lisible dans le constat : sans lui, impossible de savoir d'où il vient
-      // ni, le jour où une règle de rangement est revue, lesquels sont à réexaminer.
-      reference: `artemis:${receiver}`,
+      // LA RÉFÉRENCE PORTE LES CVE quand il y en a : c'est ce qu'on cherche pour décider, et ce
+      // qui se recopie dans un ticket.
+      reference: (cves.length ? `${cves.join(' ')} (artemis:${receiver})` : `artemis:${receiver}`).slice(0, 300),
     })
   }
   return t

@@ -583,6 +583,11 @@ Tout ce que ce dialecte coûte tient dans `utils/artemis.ts` et dans un champ de
 - **Aucun filtre par date.** `created_at_gt` et `offset` sont acceptés et **ignorés** — mesuré sur une instance : une date en 2030 rend quand même des résultats. Le curseur filtre donc à la lecture. Un filtre côté serveur qu'on croit actif est pire qu'une absence de filtre.
 - **Un module non rangé n'est pas traduit, il est nommé.** Il apparaît dans le compte rendu de synchronisation (`module Artemis non rangé : xxx (n)`). Le ranger au mieux ferait entrer dans l'inventaire des constats que personne ne retrouverait ; l'ignorer en silence ferait disparaître des trouvailles.
 
+**Les CVE sont relevées.** `cve_lookup` et `nuclei` citent leurs identifiants dans le texte du résultat : ils sont extraits, dédoublonnés, triés, et portés par la **référence** du constat (`CVE-2023-31250 CVE-2024-45440 (artemis:cve_lookup)`) — c'est ce qu'on recopie dans un ticket. Deux conséquences :
+
+- **Quand le résultat porte un score CVSS, c'est lui qui donne la gravité**, aux bornes du FIRST (≥ 9 critique, ≥ 7 élevée, ≥ 4 moyenne). Sans cette règle, toute CVE serait « élevée », y compris une faille mineure, et le compteur de critiques cesserait de vouloir dire quelque chose. Un score hors échelle est ignoré plutôt que ramené au plafond.
+- **La clé stable suit les CVE**, pas le texte : « Drupal 10.1.4 vulnérable à CVE-2024-45440 » et « Drupal 10.1.6 vulnérable à CVE-2024-45440 » sont **un seul** constat, qui garde la décision prise. Une CVE de plus en fait un autre.
+
 Les constats traduits passent par **le même `lireConstat`** que ceux d'un moteur conforme : la traduction n'a pas le droit de contourner les contrôles de format.
 
 > Un port ouvert a sa propre catégorie, `port`. Il n'entrait dans aucune des douze autres : le ranger en `decouverte` l'aurait envoyé dans la file des noms à valider, en `vulnerabilite` il aurait annoncé un risque que personne n'a établi.
